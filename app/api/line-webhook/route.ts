@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { validateSignature, webhook } from "@line/bot-sdk";
 import { getFaqData } from "@/lib/sheet";
 import { askGemini, DEFAULT_REPLY } from "@/lib/gemini";
-import { replyText } from "@/lib/line";
+import { replyText, replyMenuCarousel } from "@/lib/line";
+import type { FaqItem } from "@/types";
 
 export const runtime = "nodejs";
 
 const GEMINI_TIMEOUT_MS = 7500;
+const MENU_KEYWORD = "เมนู";
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -32,10 +34,28 @@ async function handleTextMessageEvent(
   if (!replyToken || event.message.type !== "text") return;
 
   const userMessage = event.message.text;
-  let replyMessage = DEFAULT_REPLY;
 
+  let faq: FaqItem[] = [];
   try {
-    const faq = await getFaqData();
+    faq = await getFaqData();
+  } catch (err) {
+    console.error(`[line-webhook][${requestId}] failed to load FAQ data:`, err);
+  }
+
+  if (userMessage.includes(MENU_KEYWORD)) {
+    const menuItems = faq.filter((item) => item.imageUrl);
+    if (menuItems.length > 0) {
+      try {
+        await replyMenuCarousel(replyToken, menuItems);
+        return;
+      } catch (err) {
+        console.error(`[line-webhook][${requestId}] replyMenuCarousel failed, falling back to text reply:`, err);
+      }
+    }
+  }
+
+  let replyMessage = DEFAULT_REPLY;
+  try {
     const result = await withTimeout(askGemini(userMessage, faq), GEMINI_TIMEOUT_MS);
     if (!result.isTruncated && result.text) {
       replyMessage = result.text;

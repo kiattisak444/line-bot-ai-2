@@ -64,6 +64,7 @@ function rowsToFaqItems(rows: string[][]): FaqItem[] {
     question: header.indexOf("question"),
     answer: header.indexOf("answer"),
     note: header.indexOf("note"),
+    imageUrl: header.indexOf("image_url"),
   };
 
   const items: FaqItem[] = [];
@@ -76,6 +77,7 @@ function rowsToFaqItems(rows: string[][]): FaqItem[] {
       question: (idx.question >= 0 ? cols[idx.question] : "")?.trim() ?? "",
       answer,
       note: idx.note >= 0 ? cols[idx.note]?.trim() || undefined : undefined,
+      imageUrl: idx.imageUrl >= 0 ? cols[idx.imageUrl]?.trim() || undefined : undefined,
     });
   }
 
