@@ -1,7 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import type { FaqItem, GeminiResult } from "@/types";
 
-const MODEL = "gemini-2.5-flash";
+const MODEL = "gemini-3.1-flash-lite";
 const TEMPERATURE = 1.0; // do not lower — required by product brief
 const MAX_OUTPUT_TOKENS = 1024;
 
