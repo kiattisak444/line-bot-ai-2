@@ -4,6 +4,7 @@ import type { FaqItem, GeminiResult } from "@/types";
 const MODEL = "gemini-3.1-flash-lite";
 const TEMPERATURE = 1.0; // do not lower — required by product brief
 const MAX_OUTPUT_TOKENS = 1024;
+const TIMEOUT_MS = 7500; // leaves headroom under LINE's 10s reply deadline
 
 export const DEFAULT_REPLY =
   "ระบบเรายังไม่มีข้อมูลสำหรับคำถามนี้ ขออภัยในความไม่สะดวกครับ";
@@ -77,6 +78,7 @@ export async function askGemini(
     config: {
       temperature: TEMPERATURE,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
+      abortSignal: AbortSignal.timeout(TIMEOUT_MS),
     },
   });
 

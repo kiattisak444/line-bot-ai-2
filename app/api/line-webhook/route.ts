@@ -7,23 +7,45 @@ import type { FaqItem } from "@/types";
 
 export const runtime = "nodejs";
 
-const GEMINI_TIMEOUT_MS = 7500;
 const MENU_KEYWORD = "เมนู";
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      }
-    );
-  });
+// Best-effort only: state lives in a warm serverless instance's memory, not
+// shared across instances. Still catches the common case (LINE redelivery,
+// a burst of spam) without needing an external store.
+const DEDUP_TTL_MS = 5 * 60_000;
+const seenEventIds = new Map<string, number>();
+
+function isDuplicateEvent(id: string): boolean {
+  const now = Date.now();
+  for (const [key, ts] of seenEventIds) {
+    if (now - ts > DEDUP_TTL_MS) seenEventIds.delete(key);
+  }
+  if (seenEventIds.has(id)) return true;
+  seenEventIds.set(id, now);
+  return false;
+}
+
+const RATE_LIMIT_WINDOW_MS = 20_000;
+const RATE_LIMIT_MAX = 6;
+const rateLimitState = new Map<string, { count: number; windowStart: number }>();
+
+function rateLimitKeyFor(event: webhook.MessageEvent): string {
+  const source = event.source;
+  if (source?.type === "user") return `user:${source.userId}`;
+  if (source?.type === "group") return `group:${source.groupId}`;
+  if (source?.type === "room") return `room:${source.roomId}`;
+  return "unknown";
+}
+
+function isRateLimited(key: string): boolean {
+  const now = Date.now();
+  const state = rateLimitState.get(key);
+  if (!state || now - state.windowStart > RATE_LIMIT_WINDOW_MS) {
+    rateLimitState.set(key, { count: 1, windowStart: now });
+    return false;
+  }
+  state.count++;
+  return state.count > RATE_LIMIT_MAX;
 }
 
 async function handleTextMessageEvent(
@@ -56,7 +78,7 @@ async function handleTextMessageEvent(
 
   let replyMessage = DEFAULT_REPLY;
   try {
-    const result = await withTimeout(askGemini(userMessage, faq), GEMINI_TIMEOUT_MS);
+    const result = await askGemini(userMessage, faq);
     if (!result.isTruncated && result.text) {
       replyMessage = result.text;
     }
@@ -97,6 +119,15 @@ export async function POST(req: NextRequest) {
         const requestId = event.webhookEventId || crypto.randomUUID();
         try {
           if (event.type === "message" && event.message.type === "text") {
+            if (isDuplicateEvent(requestId)) {
+              console.log(`[line-webhook][${requestId}] duplicate event, skipping`);
+              return;
+            }
+            const rateLimitKey = rateLimitKeyFor(event);
+            if (isRateLimited(rateLimitKey)) {
+              console.warn(`[line-webhook][${requestId}] rate limited: ${rateLimitKey}`);
+              return;
+            }
             await handleTextMessageEvent(event, requestId);
           }
         } catch (err) {
